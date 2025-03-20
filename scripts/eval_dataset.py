@@ -1,13 +1,21 @@
 import open3d as o3d
 from collections import defaultdict
+# 字典子类，自动处理未初始化的 key，适合动态扩充的 map，比如 combined_tumor_recon
 import click
+# 命令行工具，定义命令行参数，更友好的 CLI（替代 argparse）。
 from tqdm import tqdm
+# 进度条显示，循环时可视化进度。
 import numpy as np
 import argparse
 import glob
+# argparse：老式命令行解析（没实际用上，主要是 click）。
+# glob：文件路径搜索，批量处理文件夹中匹配的文件。
 from seebelow.utils.constants import *
+# 一些全局路径、参数等。
 from seebelow.utils.transform_utils import quat2mat
+# 四元数转旋转矩阵。
 from seebelow.utils.pcd_utils import (
+    # 点云和网格处理工具，处理 mesh 转点云、裁剪、配色、ROI 等。
     scan2mesh,
     mesh2pcd,
     mesh2roi,
@@ -23,11 +31,13 @@ from seebelow.utils.pcd_utils import (
     inverse_crop,
 )
 from seebelow.algorithms.gui import HeatmapAnimation
+# 结果可视化（如搜索路径动画）。
 import copy
 import matplotlib
 from datetime import datetime
 from seebelow.utils.rerun_utils import pcd_to_rr, mesh_to_rr, vectors_to_rr
 import rerun as rr
+# 实时 3D 可视化日志工具 rerun。
 from rerun.datatypes import TranslationAndMat3x3
 import os
 import yaml
@@ -37,11 +47,18 @@ norm = matplotlib.colors.Normalize(
     vmin=0.0,
     vmax=1.0,
 )
+# 配色方案和归一化设置。
+
+# 肿瘤类型映射编号。
+# TAU: 距离阈值（F-score 中用于判断是否匹配）。
+# 算法列表（如 "bo", "random" 两种算法）。
 TUMOR_ID = {"hemisphere": 2, "crescent": 3}
 TAU = 3e-3
 ALGOS = ["bo", "random"]
 
 # set to None if you want to reselect crop polygon geometry
+
+# 预定义的 ROI（感兴趣区域）多边形，用于 mesh 裁剪。
 EVAL_CROP_GT = {
     "hemisphere":
     np.array([[0.5407381653785706, -0.007244911044836044, 0.06466878205537796],
@@ -118,10 +135,15 @@ EVAL_CROP = {
               [0.530269205570221, -0.04979136399924755, 0.0633685290813446]])
 }
 
-
+# 传入 ground-truth mesh 和重建 mesh，计算F-score (0~1) 衡量重建效果的分数，越高说明越接近真实模型。
+# mesh_gt: ground-truth（真实的）肿瘤网格模型。
+# mesh_reconstructed: 重建的肿瘤网格模型（算法输出）。
 def compute_f_score(mesh_gt, mesh_reconstructed):
     tau = TAU
+    # 用于定义匹配点之间的距离容忍度（小于 tau 算匹配成功）。
 
+
+    # 把网格中心平移到原点 (0,0,0)，方便比较两个网格。
     def center_mesh(mesh):
         m = copy.deepcopy(mesh)
         center = m.get_center()
@@ -129,27 +151,48 @@ def compute_f_score(mesh_gt, mesh_reconstructed):
         return m
 
     def preprocess(mesh):
-        # Center the meshes to their mass center
-        # Subsample meshes
+    #  中心化 网格（上一步的函数）。
+    #    均匀采样 3000 个点，得到稠密度适中的点云。
+    # 返回 点云（用于后续点对点比较）。
         mesh = center_mesh(mesh)
         pcd = mesh.sample_points_uniformly(3000)
         return pcd
-
+# 分别将 ground-truth 和 重建模型转为点云，并中心化。
     pcd_gt = preprocess(mesh_gt)
     pcd_reconstructed = preprocess(mesh_reconstructed)
+
+
     o3d.visualization.draw_geometries([pcd_gt, pcd_reconstructed])
+    # 可视化 两个点云模型，帮助直观检查重建效果。调试用
+
+
     # Convert to numpy arrays for distance computation
     points_gt = np.asarray(pcd_gt.points)
     points_reconstructed = np.asarray(pcd_reconstructed.points)
 
     # Compute distances for precision
     dists_precision = o3d.geometry.KDTreeFlann(pcd_gt)
+    # 用 ground-truth 点云创建 KD 树，加速最近邻搜索。后续求 precision 时使用。
     precision_count = 0
     for point in points_reconstructed:
         _, _, dist = dists_precision.search_knn_vector_3d(point, 1)
         if np.sqrt(dist[0]) < tau:
             precision_count += 1
     precision = precision_count / len(points_reconstructed)
+# 初始化计数器 precision_count。
+# 遍历重建点云中的每个点。
+# 对每个点，查找 GT 点云中最近的一个点，返回距离。
+# 如果距离小于 tau，认为匹配成功，计数器加一。
+# 最终 precision：precision = 匹配成功的重建点 / 总重建点数
+
+
+
+# Precision	针对重建模型，重建点有多少比例匹配GT	      "我重建的东西有多少是真的？"
+# Recall	针对 Ground-truth，GT中有多少被重建覆盖 	"我重建的东西覆盖了多少真的？"
+# Precision 高，说明 "假阳性少"（重建的点基本都是对的）。
+# Recall 高，说明 "假阴性少"（基本所有 GT 目标都被你找到）。
+
+
 
     # Compute distances for recall
     dists_recall = o3d.geometry.KDTreeFlann(pcd_reconstructed)
@@ -164,6 +207,21 @@ def compute_f_score(mesh_gt, mesh_reconstructed):
     f_score = (2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0)
 
     return f_score
+# F-score 是 precision 和 recall 的调和平均值
+# mesh_gt  +  mesh_reconstructed
+#     │
+# [中心化 & 均匀采样 3000 点]
+#     │
+#  得到点云 pcd_gt 和 pcd_reconstructed
+#     │
+#  [计算 Precision] (重建点到 GT 点)
+#     │
+#  [计算 Recall] (GT 点到重建点)
+#     │
+#  [F-score] = 2 * P * R / (P + R)
+#     │
+#   输出 F-score 分数
+
 
 
 @click.command()
@@ -180,14 +238,39 @@ def compute_f_score(mesh_gt, mesh_reconstructed):
               default=False,
               help='Use the cached bounding box for groundtruth')
 @click.option('--use_cached_bbox', type=bool, default=False, help='Use the cached bounding box')
+
+
+# python eval_dataset.py \
+#   --dataset_path dataset_03-01-2024 \
+#   --tumor hemisphere \
+#   --use_glob False \
+#   --combine True \
+#   --use_rerun True \
+#   --use_cached_bbox True \
+#   --use_cached_bbox_gt True
+    # ➡️ 这条命令的效果：
+    # 使用 2024 年 3 月 1 日的数据集。
+    # 针对 hemisphere 肿瘤类型评估。
+    # 不批量查找。
+    # 合并多个结果。
+    # 开启 Rerun 3D 可视化。
+    # 使用之前缓存的裁剪框，避免重复选择。
+
+
 def main(dataset_path, use_glob, combine, tumor, use_rerun, use_cached_bbox_gt, use_cached_bbox):
     global EVAL_CROP, EVAL_CROP_GT
     if not use_cached_bbox_gt:
         EVAL_CROP_GT = {key: None for key in EVAL_CROP_GT}
+
+
     combined_tumor_recon = defaultdict(o3d.geometry.PointCloud)
+    # 用来合并多个重建结果的容器（点云集合）。
     gt_scan = o3d.io.read_point_cloud(str(GT_PATH))
+    # 加载 Ground-truth 扫描的点云。
     gt_tumors_pcd = {}
     gt_tumors_mesh = {}
+# 存储处理后（如裁剪、上色）的 GT 点云和 mesh。
+
     for key in EVAL_CROP.keys():
         print(key)
         gt_scan_mesh = scan2mesh(gt_scan)
@@ -196,6 +279,12 @@ def main(dataset_path, use_glob, combine, tumor, use_rerun, use_cached_bbox_gt, 
         gt_tumors_mesh[key] = color_entity(gt_scan_mesh, color_map="rainbow")
         gt_tumors_pcd[key] = color_entity(gt_scan_pcd)
         #visualize_pcds([gt_tumors_pcd[key]])
+# 针对每种肿瘤（如 hemisphere, crescent），从扫描数据生成 mesh。
+# 按 GT 区域裁剪后，转为点云，进行上色。
+# 存储在字典里，供后面评估使用。
+
+
+
     dataset_map = {}
     final_fscores_map = defaultdict(list)
     datasets = []

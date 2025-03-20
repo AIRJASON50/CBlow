@@ -3,7 +3,7 @@ import numpy as np
 
 class RunningStats:
     """from https://github.com/eanswer/TactileSimulation/blob/main/utils/running_mean_std.py"""
-
+# 动态计算数据流（如力传感器数据）的均值和方差
     def __init__(self, shape=()):
         self._mean = np.zeros(shape, "float64")
         self._var = np.ones(shape, "float64")
@@ -42,6 +42,10 @@ class RunningStats:
 
 class RingBuffer:
     """Ring buffer for normalizing and debouncing sensor values"""
+#固定长度的环形缓冲区，当数据超过设定容量时，会自动覆盖最早的数据。
+# 用于存储最近 N 个探测点的力值 / 位置数据。
+# 可以计算最近 N 个数据的标准差，判断是否达到稳定。
+ 
 
     def __init__(self, capacity, buffer=None, dtype=float):
         if buffer is None:

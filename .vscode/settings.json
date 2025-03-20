@@ -1,0 +1,6 @@
+{
+    "python.analysis.extraPaths": [
+        "./seebelow/utils",
+        "./external/deoxys_control/deoxys"
+    ]
+}

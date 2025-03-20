@@ -8,11 +8,15 @@ from multiprocessing import shared_memory
 import numpy as np
 import open3d as o3d
 import pinocchio as pin
+# 机器人动力学库，SE3位姿等。
 from scipy.spatial.transform import Rotation
+# scipy 提供的旋转计算工具，处理四元数、旋转矩阵等。
 
 from deoxys.franka_interface import FrankaInterface
 from deoxys.utils.transform_utils import quat2axisangle, quat2mat
 from deoxys.utils import YamlConfig
+
+
 from seebelow.algorithms.grid import SurfaceGridMap
 from seebelow.algorithms.search import (
     RandomSearch,
@@ -21,12 +25,24 @@ from seebelow.algorithms.search import (
     ActiveSearchWithRandomInit,
     ActiveSearchAlgos,
 )
+# 搜索算法: 生成待探测目标：
+# 随机搜索 (RandomSearch)
+# 主动搜索 (ActiveSearchWithRandomInit)
+
+
+
 from seebelow.utils.control_utils import generate_joint_space_min_jerk
+# 平滑运动轨迹生成器
 from seebelow.utils.data_utils import DatasetWriter
+# 数据写入器，存储实验数据。
 from seebelow.utils.devices import ForceSensor
+# 读取机械臂末端的力。
 from seebelow.utils.interpolator import Interpolator, InterpType
+# 插值器，用于平滑控制目标。
 from seebelow.utils.time_utils import Ratekeeper
+# 保持程序循环频率（如 50Hz）
 from seebelow.utils.proc_utils import RingBuffer, RunningStats
+# 环形缓冲区，实时保存最近的数据。
 import seebelow.utils.constants as seebelow_const
 from seebelow.utils.constants import PALP_CONST
 from seebelow.utils.constants import PalpateState
@@ -35,16 +51,41 @@ from tfvis.visualizer import RealtimeVisualizer
 
 
 def main_ctrl(shm_buffer, stop_event: mp.Event, save_folder: Path, search: Search):
+# 子进程运行函数，控制机械臂运动。
+# shm_buffer: 共享内存名称，和主进程交换数据。
+# stop_event: 停止信号。
+# save_folder: 数据保存路径。
+# search: 搜索算法对象，提供目标位置。
     existing_shm = shared_memory.SharedMemory(name=shm_buffer)
     data_buffer = np.ndarray(1, dtype=seebelow_const.PALP_DTYPE, buffer=existing_shm.buf)
+    # 绑定共享内存，data_buffer 用于实时存储机械臂位置、力、状态等。
+    
     np.random.seed(PALP_CONST.seed)
+#     设置 numpy 的随机数生成器的种子，保证算法运行的随机性可控、结果可复现。
+#     PALP_CONST.seed 来自全局配置文件，通常在主函数里根据命令行参数设置：
     goals = deque([])
+# goals：存储机器人执行过程中需要依次到达的目标点（包括过渡、探测点等）。
+# deque（双向队列）：支持从头和尾高效插入、弹出操作，非常适合动态路径管理。
+                # goals.appendleft(goal_pose)  # 插入新目标
+                # next_goal = goals.pop()     # 取出下一个目标
+
+
+
     force_buffer = RingBuffer(PALP_CONST.buffer_size)
     pos_buffer = RingBuffer(PALP_CONST.buffer_size)
+# force_buffer: 存储最近一段时间的力量值（Fz）。
+# pos_buffer: 存储探测过程中的机械臂末端位置变化。
+# RingBuffer: 固定长度，超过部分自动覆盖，保存最新的数据。长度由PALP_CONST.buffer_size 定义
+
+
+
     running_stats = RunningStats()
 
     palp_state = PalpateState()
     curr_pose_se3 = pin.SE3.Identity()
+
+
+
     using_force_control_flag = False
     collect_points_flag = False
     curr_eef_pose = None
@@ -55,18 +96,39 @@ def main_ctrl(shm_buffer, stop_event: mp.Event, save_folder: Path, search: Searc
     palp_progress = 0.0  # [0, 1]
     palp_id = 0
     stiffness = 0.0
+
+# using_force_control_flag	是否进入基于力反馈的精细探测阶段
+# collect_points_flag	是否开启数据采集（如探测位置、力量）
+# curr_eef_pose	当前机械臂末端的实时位姿
+# F_norm	力的模长（力量绝对值）
+# Fxyz	力的三维分量（Fx, Fy, Fz）
+# palp_pt	当前要探测的目标点
+# surf_normal	探测点处的表面法线，用于确定接触方向
+# palp_progress	探测进展（从未接触到接触完成，范围 [0,1]）
+# palp_id	当前探测任务编号（执行次数）
+# stiffness	探测到的表面刚度（触觉估计）
+
+
+
+
     search_history = SearchHistory()
     CF_start_time = None
     oscill_start_time = None
     start_angles = np.full(2, -PALP_CONST.angle_oscill)  # theta, phi
     end_angles = np.full(2, PALP_CONST.angle_oscill)
     max_cf_time = 0.1 if PALP_CONST.discrete_only else PALP_CONST.max_cf_time
+
+
+
     force_oscill_out = generate_joint_space_min_jerk(
         start_angles,
         end_angles,
         PALP_CONST.t_oscill / 2,
         1 / PALP_CONST.ctrl_freq,
     )
+
+
+    
     force_oscill_in = generate_joint_space_min_jerk(
         end_angles,
         start_angles,
