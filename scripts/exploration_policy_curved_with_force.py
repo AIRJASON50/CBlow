@@ -1,3 +1,25 @@
+# 接收目标位置：目标位置以 pin.SE3 对象的形式存储在 goals 队列中，包含探测点的位置和方向。
+# 队列处理：通过状态机和插值器 (interp)，按顺序处理 goals 中的目标位姿，驱动机械臂完成探测任务。
+# 探索：利用搜索算法 (search.next()) 生成新的探测点 (palp_pt 和 surf_normal)，并根据探测结果（如硬度 stiffness）更新策略，实现对未知区域的探索。
+
+
+# 在机械臂通过位置控制靠近目标点 (palp_se3) 并接触表面到一定程度（力或深度达到阈值）后，切换到力控制模式。
+# 在此模式下，机械臂在 X-Y 平面内进行振荡运动，同时沿 Z 方向施加恒定下压力，计算刚度 (stiffness)。
+# 当探测深度达到最大值或持续时间超过限制时，退出力控制，切换回位置控制并执行下一步动作（例如撤回）。
+
+
+
+# 具体流程
+# 目标生成：
+#   当 goals 队列为空且插值完成时，调用 palp_pt, surf_normal = search.next() 生成新的探测点。
+#   palpate(palp_pt, surf_normal) 将探测点转化为三个目标位姿（悬停 above_se3、探测 palp_se3、复位 reset_pose），加入 goals 队列。
+# 队列处理：
+#   主循环检测 len(goals) > 0 and interp.done，调用 state_transition() 从 goals 中取出下一个目标。
+#   插值器 (interp) 生成平滑轨迹，机械臂按顺序移动到每个目标位姿。
+# 探索与反馈：
+#   在探测状态 (PalpateState.PALPATE) 下，机械臂施加力并测量硬度 (stiffness)。
+#   硬度值通过 search.update_outcome(stiffness) 反馈给搜索算法，影响后续探测点的选择（例如，贝叶斯优化会优先选择硬度异常区域）。
+
 import time
 from collections import deque
 import click
@@ -607,7 +629,7 @@ def main(tumor, algo, select_bbox, max_palpations, autosave, seed, debug, discre
             O_p_EE_target = data_buffer["O_p_EE_target"].flatten()
             O_q_EE_target = data_buffer["O_q_EE_target"].flatten()
             O_q_EE = data_buffer["O_q_EE"].flatten()
-            
+
             if data_buffer["collect_points_flag"]:
                 subsurface_pts.append(O_p_EE)
 
