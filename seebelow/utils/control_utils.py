@@ -17,6 +17,11 @@ def _min_jerk_spaces(N: int, T: float):
         pdd_traj: Acceleration trajectory of shape (N,)
     """
     assert N > 1, "Number of planning steps must be larger than 1."
+# 为了使加加速度最小（pt的三次积分），假设pt是个多项式（平滑，易于微分）
+# 五次多项式写出速度表达式和加速度表达式，边界条件p0=0；p1=1且加速度速度都是0
+# 联立求解得到系数就是下面的样子，位移表达式是个五次多项式
+
+
 
     t_traj = np.linspace(0, 1, N)
     p_traj = 10 * t_traj**3 - 15 * t_traj**4 + 6 * t_traj**5
