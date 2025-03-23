@@ -22,6 +22,8 @@ import seebelow.utils.constants as seebelow_const
 def deoxys_ctrl(shm_posearr_name, stop_event):
     existing_shm = shared_memory.SharedMemory(name=shm_posearr_name)
     O_T_EE_posquat = np.ndarray(7, dtype=np.float32, buffer=existing_shm.buf)
+
+
     robot_interface = FrankaInterface(
         str(seebelow_const.PAN_PAN_FORCE_CFG), use_visualizer=False, control_freq=80
     )
@@ -31,43 +33,95 @@ def deoxys_ctrl(shm_posearr_name, stop_event):
 
     goals = []
 
-    O_T_P = np.eye(4)
+    O_T_P = np.eye(4) #O到phantom的坐标系转化，eye是个单位阵
     O_T_P[:3, 3] = seebelow_const.BBOX_PHANTOM.mean(axis=0)
+    # 将 O_T_P 的平移部分（矩阵的前 3 行，第 4 列）设置为 BBOX_PHANTOM 的平均位置（seebelow_const.BBOX_PHANTOM.mean(axis=0)）。
+# [[1, 0, 0, 0],
+#  [0, 1, 0, 0],
+#  [0, 0, 1, 0],
+#  [0, 0, 0, 1]]
+#变化为
+# [[1, 0, 0, x],
+#  [0, 1, 0, y],
+#  [0, 0, 1, z],
+#  [0, 0, 0, 1]]
     P_T_O = np.linalg.inv(O_T_P)
-    O_T_E = np.eye(4)
-    O_T_E[:3, :3] = quat2mat(seebelow_const.GT_SCAN_POSE[3:7])
-    O_T_E[:3, 3] = seebelow_const.GT_SCAN_POSE[:3]
 
-    goals.append(O_T_E)
+
+    O_T_E = np.eye(4)#机器人到末端执行器
+    O_T_E[:3, :3] = quat2mat(seebelow_const.GT_SCAN_POSE[3:7])
+    #预设好的一个姿态，包含位置和四元数的一个七元素数组
+# [[1, 0, 0, 0],
+#  [0, 1, 0, 0],
+#  [0, 0, 1, 0],
+#  [0, 0, 0, 1]]
+#变化为
+# [[r11, r12, r13, 0],
+#  [r21, r22, r23, 0],
+#  [r31, r32, r33, 0],
+#  [  0,   0,   0, 1]]
+    O_T_E[:3, 3] = seebelow_const.GT_SCAN_POSE[:3]
+# 变化为：
+# [[r11, r12, r13, x],
+#  [r21, r22, r23, y],
+#  [r31, r32, r33, z],
+#  [  0,   0,   0, 1]]
+# O_T_E 现在完全定义了末端执行器的初始位姿（位置和朝向），用预设好的姿态作为扫描的起点。
+
+    goals.append(O_T_E)#第一个位置
 
     P_T_E = np.matmul(P_T_O, O_T_E)
+
+
     for ang in np.linspace(np.radians(5), np.radians(20), 3):
+#模拟三个5-20度内均匀分布的角度
+
         Ry = np.eye(4)
         Ry[:3, :3] = euler2mat(np.array([0, ang, 0]))
+#将欧拉角（X=0, Y=ang, Z=0）转换为 3x3 旋转矩阵
+#  [[cos(ang),  0, sin(ang)],
+#  [      0,   1,       0],
+#  [-sin(ang), 0, cos(ang)]]
+# Ry变为：
+# [[cos(ang),  0, sin(ang), 0],
+#  [      0,   1,       0,  0],
+#  [-sin(ang), 0, cos(ang), 0],
+#  [      0,   0,       0,  1]]
         goals.append(O_T_P @ Ry @ P_T_E)
+# P_T_E：末端执行器相对于 phantom 的位姿。
+# Ry @ P_T_E：在 phantom 坐标系中绕 Y 轴旋转后的末端位姿。
+# O_T_P @ (Ry @ P_T_E)：将结果转换回世界坐标系。
+
 
     while len(robot_interface._state_buffer) == 0:
         continue
 
     while len(goals) != 0 or not interp.done:
         q, p = robot_interface.last_eef_quat_and_pos
+# 回一个元组 (eef_quat, eef_pos)，其中包含两部分：
+# eef_quat：一个 4 维的四元数数组 [x, y, z, w]，表示末端执行器的方向。
+# eef_pos：一个 3 维的位置向量 [x, y, z]，表示末端执行器在世界坐标系中的位置。
         O_T_EE_posquat[:3] = p.flatten()
         O_T_EE_posquat[3:7] = q.flatten()
+# 展平，赋值后，O_T_EE_posquat 格式为 [x, y, z, w, x, y, z]。
 
+
+#将当前位姿转化为se3（供插值使用）
         curr_eef_pose = robot_interface.last_eef_rot_and_pos
         curr_pose_se3 = pin.SE3.Identity()
         curr_pose_se3.rotation = curr_eef_pose[0]
         curr_pose_se3.translation = curr_eef_pose[1]
-
+# 将目标位姿转化为SE3对象（供插值使用）
         if interp.done:
             pose_goal = goals.pop()
             goal_pose_se3 = pin.SE3.Identity()
             goal_pose_se3.rotation = pose_goal[:3, :3]
             goal_pose_se3.translation = pose_goal[:3, 3]
+# 规划运动轨迹
             interp.init(
                 curr_pose_se3, goal_pose_se3, steps=int(seebelow_const.STEP_FAST / 1)
             )
-
+# 第一个姿态
         action = np.zeros(7)
         next_se3_pose = interp.next()
         xyz_quat = pin.SE3ToXYZQUAT(next_se3_pose)
@@ -92,18 +146,24 @@ def deoxys_ctrl(shm_posearr_name, stop_event):
 
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser()
+# --interface-cfg：机器人接口配置文件，默认值 "pan-pan-force.yml"。
     argparser.add_argument("--interface-cfg", type=str, default="pan-pan-force.yml")
+# --calibration-cfg：相机标定配置文件，默认值 "camera_calibration_12-16-2023_14-48-12"。
     argparser.add_argument(
         "--calibration-cfg", type=str, default="camera_calibration_12-16-2023_14-48-12"
     )
+# --cam-name：相机名称，默认值 "wrist_d415"（可能是 RealSense D415 型号）。
     argparser.add_argument("--cam-name", type=str, default="wrist_d415")
     args = argparser.parse_args()
 
     O_T_EE_posquat = np.zeros(7, dtype=np.float32)
+
     shm = shared_memory.SharedMemory(create=True, size=O_T_EE_posquat.nbytes)
+
     O_T_EE_posquat = np.ndarray(
         O_T_EE_posquat.shape, dtype=O_T_EE_posquat.dtype, buffer=shm.buf
     )
+
     stop_event = mp.Event()
     ctrl_process = mp.Process(target=deoxys_ctrl, args=(shm.name, stop_event))
     ctrl_process.start()
@@ -112,11 +172,28 @@ if __name__ == "__main__":
         continue
 
     # print(np_to_constant("GT_SCAN_POSE", O_T_EE_posquat))
-
+# 加载相机相对于末端执行器的外参（extrinsic parameters）
     with open(
         str(seebelow_const.SEEBELOW_CFG_PATH / args.calibration_cfg / "extrinsics.yaml"), "r"
     ) as file:
+        
         calib_cfg = yaml.safe_load(file)
+# 将 YAML 文件内容解析为 Python 数据结构。
+# yaml.safe_load 读取文件并返回字典。
+# calib_cfg 可能包含多个相机的标定数据，例如：
+
+# wrist_d415:
+#   - 0.1  # x
+#   - 0.2  # y
+#   - 0.3  # z
+#   - 1.0  # qw
+#   - 0.0  # qx
+#   - 0.0  # qy
+#   - 0.0  # qz
+
+
+
+
         xyzxyzw = calib_cfg[args.cam_name]
         ee_pos = np.array(xyzxyzw[:3])
         ee_rot = quat2mat(xyzxyzw[-4:])
