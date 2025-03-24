@@ -172,6 +172,9 @@ if __name__ == "__main__":
         continue
 
     # print(np_to_constant("GT_SCAN_POSE", O_T_EE_posquat))
+
+
+# 获取E2C
 # 加载相机相对于末端执行器的外参（extrinsic parameters）
     with open(
         str(seebelow_const.SEEBELOW_CFG_PATH / args.calibration_cfg / "extrinsics.yaml"), "r"
@@ -201,6 +204,8 @@ if __name__ == "__main__":
         E_T_C[:3, :3] = ee_rot
         E_T_C[:3, 3] = ee_pos
 
+
+
     rs = RealsenseCapture()
     pcd = o3d.geometry.PointCloud()
 
@@ -222,23 +227,40 @@ if __name__ == "__main__":
     while not stop_event.is_set():
         # _, new_pcd = rs.read(get_mask=lambda x: get_color_mask(x, TUMOR_HSV_THRESHOLD))
         _, new_pcd = rs.read()
+# rs.read() 是 RealsenseCapture 的方法，返回一个元组（可能包括颜色帧和点云）。
+# 被注释掉的行使用了掩码（get_mask），可能是基于 HSV 颜色阈值过滤点云，但当前版本直接读取完整点云。
+# _ 表示忽略第一个返回值（可能是颜色帧），new_pcd 是新的点云对象（o3d.geometry.PointCloud）。
+
+
 
         ee_pos = np.array(O_T_EE_posquat[:3])
+        # 获取执行器位置xyz
         ee_mat = quat2mat(O_T_EE_posquat[3:7])
+        # 末端执行器四元数转化为旋转矩阵，朝向
         O_T_E = np.eye(4)
         O_T_E[:3, :3] = ee_mat
         O_T_E[:3, 3] = ee_pos
+
+
         O_T_C = O_T_E @ E_T_C
         new_pcd.transform(O_T_C)
+        # 将新采集的点云从相机坐标系转换到世界坐标
+
         bbox = pick_surface_bbox(new_pcd, bbox_pts=selected_bbox)
         # print(array2constant("BBOX_ROI", np.asarray(bbox.get_box_points())))
+
+        # 剪裁点云
         selected_bbox = np.asarray(bbox.get_box_points())
         new_pcd = new_pcd.crop(bbox)
+        # 剪裁后的点云叠加回去
         pcd += new_pcd
+
+# 完整点云数据转化为坐标
         tumor_pts = np.asarray(pcd.points)
         tumor_mean = tumor_pts.mean(axis=0)
         O_T_TUM = np.eye(4)
         O_T_TUM[:3, 3] = tumor_mean
+        # 平移到肿瘤中心的转换矩阵
 
         # tf visualizer
         rtv.set_frame_tf("EEF", O_T_E)
