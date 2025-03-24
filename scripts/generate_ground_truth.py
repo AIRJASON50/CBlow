@@ -1,3 +1,5 @@
+# 生成了三个目标姿态，分别拍摄并且裁剪点云，最后相加获取整体视角
+
 import argparse
 import multiprocessing as mp
 from datetime import datetime
@@ -17,6 +19,8 @@ from seebelow.utils.time_utils import Ratekeeper
 from seebelow.utils.transform_utils import euler2mat
 from seebelow.utils.interpolator import Interpolator, InterpType
 import seebelow.utils.constants as seebelow_const
+
+
 
 
 def deoxys_ctrl(shm_posearr_name, stop_event):

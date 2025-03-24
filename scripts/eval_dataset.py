@@ -1,3 +1,27 @@
+# 命令行参数解析 (click)
+#         │
+#         ├──→ 加载 Ground-truth 肿瘤模型
+#         │         │
+#         │         └──→ 预处理（裁剪 + 上色）
+#         │
+#         ├──→ 加载重建数据（单个或批量）
+#         │         │
+#         │         ├──→ 点云 → mesh → 裁剪
+#         │         │
+#         │         └──→ 分析算法/实验信息
+#         │
+#         ├──→ 重建 vs GT → 计算 F-score
+#         │
+#         ├──→ 保存结果（mesh + F-score）
+#         │
+#         ├──→ 批量统计（均值、最大、最小）【可选】
+#         │
+#         └──→ 可视化 (rerun)【可选】
+
+
+
+
+
 import open3d as o3d
 from collections import defaultdict
 # 字典子类，自动处理未初始化的 key，适合动态扩充的 map，比如 combined_tumor_recon
@@ -519,7 +543,12 @@ def main(dataset_path, use_glob, combine, tumor, use_rerun, use_cached_bbox_gt, 
         )
 
         o3d.io.write_triangle_mesh(str(save_path / "mesh_without_CF.ply"), tumor_mesh_without_CF)
+#         将 不带颜色滤波 (without_CF) 的肿瘤重建网格保存为 .ply 文件。
+#         save_path 是本次评估结果存储文件夹。
+#         .ply 格式：标准 3D 点云/网格文件格式，方便后续查看、分析。
+
         o3d.io.write_triangle_mesh(str(save_path / "mesh_with_CF.ply"), tumor_mesh_with_CF)
+        
         o3d.io.write_triangle_mesh(str(save_path / "mesh_gt_scan.ply"), ground_truth_mesh_scan)
 
         if use_glob:

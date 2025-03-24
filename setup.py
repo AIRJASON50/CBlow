@@ -26,7 +26,7 @@ setup(
         "easydict",
         "termcolor",
         "zmq",
-        "protobuf==3.20.0",
+        # "protobuf==3.20.0",
         "pybullet",
         "numba",
         "glfw",
