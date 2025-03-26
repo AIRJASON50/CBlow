@@ -610,7 +610,7 @@ def main(tumor, algo, select_bbox, max_palpations, autosave, seed, debug, discre
 #         args=(shm.name, stop_event, dataset_writer.dataset_folder, search),
 #     )#创建一个子进程用于搜索
 #     ctrl_process.start()
-fixed_region = {
+    fixed_region = {
         "center": np.array([0.5, 0.2, 0.1]),  # 固定位置
         "width": 0.1,  # X 范围
         "height": 0.1,  # Y 范围
