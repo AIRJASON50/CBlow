@@ -4,6 +4,13 @@ Implementation of Active Area Search from Ma, Y., Garnett, R. &amp; Schneider, J
 @author Raghava Uppuluri
 """
 
+'''
+1. 计算了两次Vsum,一次是计算已知点之间的一次是计算已知点-候选点之间的，应该是后在一种而且有覆盖，问一下作者
+2. 后续的公式，比如说计算均值和方差的公式得对一下论文，怀疑有错
+Xhat是已知点X和候选点Xs拼接起来的矩阵，X通过四叉树分区，在不同的区域内计算不同的已知点和候选点之间的协方差得到Vsum，通过Vsum计算kern和wgs之类的值完成后续计算
+'''
+
+
 import numpy as np
 from scipy.stats import norm
 
@@ -50,13 +57,9 @@ class ActiveAreaSearch:
         X = np.array(self.X)  # shape: (len(X), state_dim)
         y = np.array(self.Y)  # shape: (len(X), 1)
         y = y[:, np.newaxis]
-        '''self.X 是一个 Python 列表，形式如 [array([x1, y1]), array([x2, y2]), ...]，其中每个元素是一个 (2,) 的 NumPy 数组。
-        列表不支持矩阵运算'''
+        '''self.X 是一个 Python 列表，形式如 [array([x1, y1]), array([x2, y2]), ...]，其中每个元素是一个 (2,) 的 NumPy 数组。列表不支持矩阵运算'''
         X_s = self.grid.vectorized_states
-        '''x_s是ROI区域内的所有点坐标，形状为(n_candidates, 1, 2)
-相当于目标区域内的点作了转质（n_candidates，2）是n个点的两个坐标的排列
-'''
-
+        '''x_s是ROI区域内的所有点坐标，形状为(n_candidates, 1, 2)相当于目标区域内的点作了转质（n_candidates，2）是n个点的两个坐标的排列'''
         print("X_s", X_s.shape)
         X_hat = np.zeros((X_s.shape[0], X.shape[0] + 1, self.state_dim))
         '''X_hat: 初始化为全零数组，形状为 (n_candidates, n_samples + 1, 2)。
